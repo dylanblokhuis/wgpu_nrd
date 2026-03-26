@@ -50,7 +50,14 @@ fn dxil_bytes(desc: &ffi::nrd_ComputeShaderDesc) -> &[u8] {
     unsafe { std::slice::from_raw_parts(desc.bytecode as *const u8, desc.size as usize) }
 }
 
-/// Create passthrough shader module for the active backend (not Metal — use [`shader_module_passthrough_msl`]).
+fn metal_lib_bytes(desc: &ffi::nrd_ComputeShaderDesc) -> &[u8] {
+    if desc.size == 0 || desc.bytecode.is_null() {
+        return &[];
+    }
+    unsafe { std::slice::from_raw_parts(desc.bytecode as *const u8, desc.size as usize) }
+}
+
+/// Create passthrough shader module for the active backend (SPIR-V, DXIL, or precompiled `.metallib` on Metal).
 pub unsafe fn shader_module_passthrough(
     device: &wgpu::Device,
     backend: wgpu::Backend,
@@ -80,25 +87,17 @@ pub unsafe fn shader_module_passthrough(
             desc.dxil = Some(Cow::Borrowed(dxil));
         }
         wgpu::Backend::Metal => {
-            return Err(WgpuNrdError::EmbedMslRequired);
+            let metallib = metal_lib_bytes(&pipeline.computeShaderMetal);
+            if metallib.is_empty() {
+                return Err(WgpuNrdError::SpirvReflect(
+                    "empty Metal metallib in nrd_PipelineDesc.computeShaderMetal".into(),
+                ));
+            }
+            desc.metallib = Some(Cow::Borrowed(metallib));
         }
     }
 
     Ok(unsafe { device.create_shader_module_passthrough(desc) })
-}
-
-/// Metal-only: `msl` source + same workgroup triple.
-pub unsafe fn shader_module_passthrough_msl(
-    device: &wgpu::Device,
-    msl: &str,
-    workgroup: (u32, u32, u32),
-    label: Option<&str>,
-) -> wgpu::ShaderModule {
-    let mut desc = wgpu::ShaderModuleDescriptorPassthrough::default();
-    desc.label = label;
-    desc.num_workgroups = workgroup;
-    desc.msl = Some(Cow::Borrowed(msl));
-    unsafe { device.create_shader_module_passthrough(desc) }
 }
 
 /// Snapshot resource bindings from [`Instance::compute_dispatches`] for storage format patching.
@@ -144,10 +143,7 @@ fn patch_resource_layout_from_nrd(
             wgpu::BindingType::StorageTexture { format, .. } => {
                 *format = fmt;
             }
-            wgpu::BindingType::Texture {
-                sample_type,
-                ..
-            } => {
+            wgpu::BindingType::Texture { sample_type, .. } => {
                 if let Some(st) = wgpu_texture_binding_sample_type(fmt) {
                     *sample_type = st;
                 }
@@ -161,13 +157,11 @@ fn patch_resource_layout_from_nrd(
 /// Build all pipeline states for an NRD instance description.
 ///
 /// Returns pipeline states, bind group layout for constants/samplers, and its reflected entries.
-#[allow(unused_variables)] // `msl_for_index` only used when `backend == Metal`
 pub fn build_pipelines(
     device: &wgpu::Device,
     backend: wgpu::Backend,
     raw: &ffi::nrd_InstanceDesc,
     pipelines: &[ffi::nrd_PipelineDesc],
-    msl_for_index: impl Fn(usize) -> Option<&'static str>,
     dispatch_resources: &[(u16, Vec<ResourceBinding>)],
     permanent: &[ffi::nrd_TextureDesc],
     transient: &[ffi::nrd_TextureDesc],
@@ -214,16 +208,8 @@ pub fn build_pipelines(
         let wg = compute_workgroup_size(&reflection, &entry)?;
 
         let mut entries1 = bind_group_layout_entries(&reflection, raw.resourcesSpaceIndex, 1)?;
-        if let Some((_, resources)) = dispatch_resources
-            .iter()
-            .find(|(pid, _)| *pid == i as u16)
-        {
-            patch_resource_layout_from_nrd(
-                &mut entries1,
-                resources,
-                permanent,
-                transient,
-            )?;
+        if let Some((_, resources)) = dispatch_resources.iter().find(|(pid, _)| *pid == i as u16) {
+            patch_resource_layout_from_nrd(&mut entries1, resources, permanent, transient)?;
         }
         let bgl1 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some(&format!("nrd_set_resources_{i}")),
@@ -254,19 +240,7 @@ pub fn build_pipelines(
             immediate_size: 0,
         });
 
-        let sm = if backend == wgpu::Backend::Metal {
-            #[cfg(feature = "embed-msl")]
-            {
-                let msl = msl_for_index(i).ok_or(WgpuNrdError::EmbedMslRequired)?;
-                unsafe { shader_module_passthrough_msl(device, msl, wg, Some("nrd_msl")) }
-            }
-            #[cfg(not(feature = "embed-msl"))]
-            {
-                return Err(WgpuNrdError::EmbedMslRequired);
-            }
-        } else {
-            unsafe { shader_module_passthrough(device, backend, p, wg, Some("nrd_spirv"))? }
-        };
+        let sm = unsafe { shader_module_passthrough(device, backend, p, wg, Some("nrd_shader"))? };
 
         let entry = if entry == "main" && backend == wgpu::Backend::Metal {
             "main0"

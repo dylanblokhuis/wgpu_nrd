@@ -10,6 +10,6 @@ glam = "0.29"
 pollster = "0.4"
 sdl3 = { version = "0.17", features = ["raw-window-handle"] }
 wgpu.workspace = true
-wgpu_nrd = { path = "../..", features = ["embed-msl"] }
+wgpu_nrd = { path = "../.." }
 wesl.workspace = true
 wgpu_nrd_shader = { path = "../../shader" }

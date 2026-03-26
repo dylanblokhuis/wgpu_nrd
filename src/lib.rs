@@ -1,8 +1,6 @@
 //! wgpu integration for [NVIDIA NRD](https://github.com/NVIDIAGameWorks/RayTracingDenoiser) via [`nrd_sys`].
 //!
-//! Shaders are loaded with [`wgpu::Device::create_shader_module_passthrough`] (SPIR-V, DXIL, or embedded MSL on Metal).
-//!
-//! Enable **`embed-msl`** on this crate (and build `nrd-sys` with `embed-msl` on macOS) for Metal.
+//! Shaders are loaded with [`wgpu::Device::create_shader_module_passthrough`] (SPIR-V, DXIL, or precompiled `.metallib` on Metal from NRD).
 //!
 //! [`WgpuNrd::new`] builds the NRD [`Instance`] from [`DenoiserSlot`]s; NRD types used by typical apps are re-exported so you do not need a direct `nrd-sys` dependency.
 
@@ -145,21 +143,12 @@ impl WgpuNrd {
                 ));
             }
 
-            let msl_table: Vec<Option<&'static str>> = if backend == wgpu::Backend::Metal {
-                desc.pipelines_with_msl()
-                    .map(|v| v.compute_shader_msl.map(|m| m.source))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
             let (pipelines, bind_group_layout_constants, constant_layout_entries) =
                 build_pipelines(
                     device,
                     backend,
                     raw,
                     pipelines_slice,
-                    |i| msl_table.get(i).copied().flatten(),
                     &dispatch_resources,
                     &permanent,
                     &transient,

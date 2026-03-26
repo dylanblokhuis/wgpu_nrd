@@ -27,9 +27,6 @@ pub enum WgpuNrdError {
     /// Shader entry point not found in SPIR-V module.
     #[error("entry point {0:?} not found in SPIR-V")]
     EntryPointNotFound(String),
-    /// `embed-msl` feature is required on this backend but was not enabled.
-    #[error("Metal backend requires wgpu_nrd feature `embed-msl` (and nrd-sys built with embedded MSL)")]
-    EmbedMslRequired,
     /// Pool texture needs texture and/or storage binding, but the format allows none of those usages on this adapter.
     #[error("texture format {format:?} cannot be used for NRD pools on this adapter (allowed usages: {allowed:?})")]
     PoolTextureFormatNotBindable {

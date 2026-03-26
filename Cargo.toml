@@ -7,8 +7,6 @@ license = "MIT OR Apache-2.0"
 
 [features]
 default = []
-# Forward to nrd-sys: embedded MSL for Metal passthrough (macOS build of nrd-sys).
-embed-msl = ["nrd-sys/embed-msl"]
 
 [dependencies]
 bytemuck.workspace = true
