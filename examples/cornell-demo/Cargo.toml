@@ -1,0 +1,15 @@
+[package]
+name = "cornell-demo"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+bytemuck.workspace = true
+glam = "0.29"
+pollster = "0.4"
+sdl3 = { version = "0.17", features = ["raw-window-handle"] }
+wgpu.workspace = true
+wgpu_nrd = { path = "../..", features = ["embed-msl"] }
+wesl.workspace = true
+wgpu_nrd_shader = { path = "../../shader" }

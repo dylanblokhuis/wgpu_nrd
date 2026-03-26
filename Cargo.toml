@@ -1,0 +1,27 @@
+[package]
+name = "wgpu_nrd"
+version = "0.1.0"
+edition = "2024"
+description = "wgpu integration for NVIDIA NRD (via nrd-sys)"
+license = "MIT OR Apache-2.0"
+
+[features]
+default = []
+# Forward to nrd-sys: embedded MSL for Metal passthrough (macOS build of nrd-sys).
+embed-msl = ["nrd-sys/embed-msl"]
+
+[dependencies]
+bytemuck.workspace = true
+nrd-sys = { path = "../nrd-sys" }
+rspirv-reflect = "0.9"
+thiserror = "2.0"
+wgpu.workspace = true
+
+[workspace]
+resolver = "3"
+members = [".", "examples/cornell-demo", "shader"]
+
+[workspace.dependencies]
+bytemuck = "1.24"
+wgpu = "29.0.0"
+wesl = { version = "0.3", features = ["naga-ext"] }
