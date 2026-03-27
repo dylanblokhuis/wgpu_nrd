@@ -1,4 +1,5 @@
-//! Cornell box path-traced G-buffer + NRD ReblurDiffuse + fullscreen blit (wgpu ray query).
+//! Cornell box G-buffer + full-res diffuse trace (primary NEE + one cosine bounce with secondary
+//! NEE for GI) + NRD ReblurDiffuse temporal/spatial denoise + blit (wgpu ray query).
 
 mod geometry;
 
@@ -7,7 +8,6 @@ use std::{iter, mem};
 use bytemuck::{Pod, Zeroable};
 use geometry::{BlasVertex, build_cornell_mesh};
 use glam::{Affine3A, Mat4, Vec3};
-use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use wgpu::SurfaceTargetUnsafe;
 use wgpu::util::DeviceExt;
@@ -33,6 +33,13 @@ struct RtUniforms {
 struct GpuMaterial {
     albedo: [f32; 4],
     emissive: [f32; 4],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct BlitUniforms {
+    mode: u32,
+    _pad: [u32; 3],
 }
 
 #[inline]
@@ -123,6 +130,20 @@ fn main() {
         identifier: Identifier(0),
         denoiser: Denoiser::ReblurDiffuse,
     }];
+
+    let mut common_for_pipelines = default_common_settings();
+    common_for_pipelines.resourceSize = [surface_config.width as u16, surface_config.height as u16];
+    common_for_pipelines.resourceSizePrev =
+        [surface_config.width as u16, surface_config.height as u16];
+    common_for_pipelines.rectSize = [surface_config.width as u16, surface_config.height as u16];
+    common_for_pipelines.rectSizePrev = [surface_config.width as u16, surface_config.height as u16];
+    common_for_pipelines.viewZScale = 1.0;
+    // Needed so `clone_dispatch_resource_lists` sees the validation dispatch and pool layouts match.
+    common_for_pipelines.enableValidation = true;
+
+    let mut reblur_for_pipelines = default_reblur_settings();
+    reblur_for_pipelines.hitDistanceReconstructionMode = 1;
+
     let mut wgpu_nrd = WgpuNrd::new(
         &device,
         &adapter,
@@ -131,24 +152,13 @@ fn main() {
         surface_config.width,
         surface_config.height,
         &[denoisers[0].identifier],
+        |inst| {
+            inst.set_common_settings(&common_for_pipelines)?;
+            inst.set_reblur_settings(denoisers[0].identifier, &reblur_for_pipelines)?;
+            Ok(())
+        },
     )
     .unwrap();
-
-    let mut common_settings = default_common_settings();
-    common_settings.resourceSize = [surface_config.width as u16, surface_config.height as u16];
-    common_settings.resourceSizePrev = [surface_config.width as u16, surface_config.height as u16];
-    common_settings.rectSize = [surface_config.width as u16, surface_config.height as u16];
-    common_settings.rectSizePrev = [surface_config.width as u16, surface_config.height as u16];
-    common_settings.viewZScale = 1.0;
-    wgpu_nrd
-        .instance
-        .set_common_settings(&common_settings)
-        .unwrap();
-    let reblur = default_reblur_settings();
-    wgpu_nrd
-        .instance
-        .set_reblur_settings(denoisers[0].identifier, &reblur)
-        .unwrap();
 
     let (vertex_data, index_data, tri_meta) = build_cornell_mesh();
 
@@ -302,23 +312,13 @@ fn main() {
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::R32Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
                     format: wgpu::TextureFormat::Rgba16Float,
                     view_dimension: wgpu::TextureViewDimension::D2,
                 },
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 6,
+                binding: 5,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
@@ -328,7 +328,7 @@ fn main() {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 7,
+                binding: 6,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::AccelerationStructure {
                     vertex_return: false,
@@ -336,7 +336,7 @@ fn main() {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 8,
+                binding: 7,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -346,7 +346,7 @@ fn main() {
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 9,
+                binding: 8,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Storage { read_only: true },
@@ -434,16 +434,6 @@ fn main() {
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::StorageTexture {
                     access: wgpu::StorageTextureAccess::ReadOnly,
-                    format: wgpu::TextureFormat::R32Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 8,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::ReadOnly,
                     format: wgpu::TextureFormat::Rgba16Float,
                     view_dimension: wgpu::TextureViewDimension::D2,
                 },
@@ -517,7 +507,57 @@ fn main() {
             wgpu::BindGroupLayoutEntry {
                 binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 3,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 4,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 5,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 6,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            },
+            wgpu::BindGroupLayoutEntry {
+                binding: 7,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
                 count: None,
             },
         ],
@@ -580,6 +620,13 @@ fn main() {
     let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("cornell_rt_uniforms"),
         size: mem::size_of::<RtUniforms>() as u64,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    let blit_uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("cornell_blit_uniforms"),
+        size: mem::size_of::<BlitUniforms>() as u64,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         mapped_at_creation: false,
     });
@@ -650,16 +697,6 @@ fn main() {
         mip_level_count: 1,
     });
 
-    let in_primary_hit_t = device.create_texture(&wgpu::TextureDescriptor {
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::R32Float,
-        sample_count: 1,
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
-        view_formats: &[],
-        label: Some("in_primary_hit_t"),
-        size: gbuffer_extent,
-        mip_level_count: 1,
-    });
     let in_emissive = device.create_texture(&wgpu::TextureDescriptor {
         dimension: wgpu::TextureDimension::D2,
         format: wgpu::TextureFormat::Rgba16Float,
@@ -691,6 +728,16 @@ fn main() {
         size: gbuffer_extent,
         mip_level_count: 1,
     });
+    let out_validation = device.create_texture(&wgpu::TextureDescriptor {
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba16Float,
+        sample_count: 1,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::STORAGE_BINDING,
+        view_formats: &[],
+        label: Some("out_validation"),
+        size: gbuffer_extent,
+        mip_level_count: 1,
+    });
 
     let v_in_mv = in_mv.create_view(&wgpu::TextureViewDescriptor::default());
     let v_in_view_z = in_view_z.create_view(&wgpu::TextureViewDescriptor::default());
@@ -698,10 +745,10 @@ fn main() {
         in_view_z_storage.create_view(&wgpu::TextureViewDescriptor::default());
     let v_in_nr = in_normal_roughness.create_view(&wgpu::TextureViewDescriptor::default());
     let v_in_albedo = in_albedo.create_view(&wgpu::TextureViewDescriptor::default());
-    let v_in_primary_hit_t = in_primary_hit_t.create_view(&wgpu::TextureViewDescriptor::default());
     let v_in_emissive = in_emissive.create_view(&wgpu::TextureViewDescriptor::default());
     let v_in_diff = in_diff_radiance_hitdist.create_view(&wgpu::TextureViewDescriptor::default());
     let v_out_diff = out_diff_radiance_hitdist.create_view(&wgpu::TextureViewDescriptor::default());
+    let v_out_validation = out_validation.create_view(&wgpu::TextureViewDescriptor::default());
 
     let gbuffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("cornell_gbuffer_bg"),
@@ -725,26 +772,22 @@ fn main() {
             },
             wgpu::BindGroupEntry {
                 binding: 4,
-                resource: wgpu::BindingResource::TextureView(&v_in_primary_hit_t),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
                 resource: wgpu::BindingResource::TextureView(&v_in_emissive),
             },
             wgpu::BindGroupEntry {
-                binding: 6,
+                binding: 5,
                 resource: uniform_buf.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 7,
+                binding: 6,
                 resource: wgpu::BindingResource::AccelerationStructure(&tlas),
             },
             wgpu::BindGroupEntry {
-                binding: 8,
+                binding: 7,
                 resource: tri_meta_buf.as_entire_binding(),
             },
             wgpu::BindGroupEntry {
-                binding: 9,
+                binding: 8,
                 resource: materials_buf.as_entire_binding(),
             },
         ],
@@ -784,18 +827,14 @@ fn main() {
             },
             wgpu::BindGroupEntry {
                 binding: 7,
-                resource: wgpu::BindingResource::TextureView(&v_in_primary_hit_t),
-            },
-            wgpu::BindGroupEntry {
-                binding: 8,
                 resource: wgpu::BindingResource::TextureView(&v_in_emissive),
             },
         ],
     });
 
-    // Blit: 0 = diffuse radiance (denoised or raw), 1 = albedo gbuffer, 2 = sampler.
-    let blit_bind_group_denoised = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cornell_blit_bg_denoised"),
+    // Blit `mode` (see `blit.wesl`): 0 denoised, 1 raw, 2 normals, 3 depth, 4 NRD validation grid.
+    let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("cornell_blit_bg"),
         layout: &blit_bgl_owned,
         entries: &[
             wgpu::BindGroupEntry {
@@ -804,51 +843,57 @@ fn main() {
             },
             wgpu::BindGroupEntry {
                 binding: 1,
-                resource: wgpu::BindingResource::TextureView(&v_in_albedo),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(&blit_sampler),
-            },
-        ],
-    });
-    let blit_bind_group_in = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cornell_blit_bg_in_radiance"),
-        layout: &blit_bgl_owned,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
                 resource: wgpu::BindingResource::TextureView(&v_in_diff),
             },
             wgpu::BindGroupEntry {
-                binding: 1,
+                binding: 2,
                 resource: wgpu::BindingResource::TextureView(&v_in_albedo),
             },
             wgpu::BindGroupEntry {
-                binding: 2,
+                binding: 3,
+                resource: wgpu::BindingResource::TextureView(&v_in_nr),
+            },
+            wgpu::BindGroupEntry {
+                binding: 4,
+                resource: wgpu::BindingResource::TextureView(&v_in_view_z),
+            },
+            wgpu::BindGroupEntry {
+                binding: 5,
                 resource: wgpu::BindingResource::Sampler(&blit_sampler),
+            },
+            wgpu::BindGroupEntry {
+                binding: 6,
+                resource: blit_uniform_buf.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 7,
+                resource: wgpu::BindingResource::TextureView(&v_out_validation),
             },
         ],
     });
 
-    let mut denoise_enabled = true;
+    // Left-click cycles: denoised → raw → normals → depth → NRD validation.
+    let mut blit_view_mode: u32 = 0;
 
     'running: loop {
         let mut pump = ctx.event_pump().unwrap();
         for event in pump.poll_iter() {
             match event {
                 sdl3::event::Event::Quit { .. } => break 'running,
-                sdl3::event::Event::KeyDown {
-                    keycode: Some(Keycode::D),
-                    repeat: false,
-                    ..
-                }
-                | sdl3::event::Event::MouseButtonDown {
+                sdl3::event::Event::MouseButtonDown {
                     mouse_btn: MouseButton::Left,
                     ..
                 } => {
-                    denoise_enabled = !denoise_enabled;
-                    eprintln!("denoise: {}", if denoise_enabled { "on" } else { "off" });
+                    blit_view_mode = (blit_view_mode + 1) % 5;
+                    let label = match blit_view_mode {
+                        0 => "denoised",
+                        1 => "raw (no denoiser)",
+                        2 => "normals",
+                        3 => "primary hit distance",
+                        4 => "NRD validation (OUT_VALIDATION)",
+                        _ => "?",
+                    };
+                    eprintln!("viewport: {label}");
                 }
                 _ => {}
             }
@@ -877,13 +922,21 @@ fn main() {
             view: view.to_cols_array(),
             frame_data: [frame_index, 0, 0, 0],
             hit_dist_and_rough: [
-                reblur.hitDistanceParameters.A,
-                reblur.hitDistanceParameters.B,
-                reblur.hitDistanceParameters.C,
+                reblur_for_pipelines.hitDistanceParameters.A,
+                reblur_for_pipelines.hitDistanceParameters.B,
+                reblur_for_pipelines.hitDistanceParameters.C,
                 0.6,
             ],
         };
         queue.write_buffer(&uniform_buf, 0, bytemuck::bytes_of(&u));
+        queue.write_buffer(
+            &blit_uniform_buf,
+            0,
+            bytemuck::bytes_of(&BlitUniforms {
+                mode: blit_view_mode,
+                _pad: [0; 3],
+            }),
+        );
 
         let mut common_settings = default_common_settings();
         common_settings.resourceSize = [surface_config.width as u16, surface_config.height as u16];
@@ -898,6 +951,7 @@ fn main() {
         common_settings.worldToViewMatrixPrev = view.to_cols_array();
         common_settings.viewToClipMatrix = proj.to_cols_array();
         common_settings.viewToClipMatrixPrev = proj.to_cols_array();
+        common_settings.enableValidation = blit_view_mode == 4;
         wgpu_nrd
             .instance
             .set_common_settings(&common_settings)
@@ -922,6 +976,11 @@ fn main() {
             ResourceType::OutDiffRadianceHitdist as u32,
             v_out_diff.clone(),
         );
+        if common_settings.enableValidation {
+            user_resources
+                .by_type
+                .insert(ResourceType::OutValidation as u32, v_out_validation.clone());
+        }
 
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
@@ -955,7 +1014,7 @@ fn main() {
             gbuffer_extent,
         );
 
-        if denoise_enabled {
+        if blit_view_mode == 0 || blit_view_mode == 4 {
             wgpu_nrd
                 .encode_dispatches(
                     &mut encoder,
@@ -985,12 +1044,7 @@ fn main() {
                 multiview_mask: None,
             });
             rpass.set_pipeline(&blit_pipeline);
-            let blit_bg = if denoise_enabled {
-                &blit_bind_group_denoised
-            } else {
-                &blit_bind_group_in
-            };
-            rpass.set_bind_group(0, blit_bg, &[]);
+            rpass.set_bind_group(0, &blit_bind_group, &[]);
             rpass.draw(0..3, 0..1);
         }
 

@@ -4,10 +4,11 @@ import nrd::NRD::nrd_front_end_unpack_normal_and_roughness;
 
 enable wgpu_ray_query;
 
-/// Diffuse shading from G-buffer (no primary ray). One NEE + one cosine indirect sample.
-/// `norm_hit_dist` follows the **radiance-carrying** path: indirect emissive hit uses that ray's
-/// `t` and view-Z at the secondary point; primary-visible emissive uses camera-ray `t`; NEE-only
-/// uses 0 in .w.
+/// Diffuse shading from G-buffer (no primary camera ray). Per pixel: one NEE at the visible
+/// surface + one cosine hemisphere ray; at a **non-emissive** secondary hit, another NEE gives
+/// one-bounce diffuse GI (color bleeding). Emissive secondary uses emitted radiance.
+/// Stored value matches the blit: outgoing ÷ primary albedo (same units as primary NEE term).
+/// `norm_hit_dist`: indirect with a real secondary hit uses path length to that hit; else 0.
 
 const PI: f32 = 3.141592653589793;
 
@@ -39,8 +40,7 @@ struct Material {
 @group(0) @binding(4) var<storage, read> materials: array<Material>;
 @group(0) @binding(5) var in_viewz: texture_storage_2d<r32float, read>;
 @group(0) @binding(6) var in_nr: texture_storage_2d<rgba8unorm, read>;
-@group(0) @binding(7) var in_primary_hit_t: texture_storage_2d<r32float, read>;
-@group(0) @binding(8) var in_emissive: texture_storage_2d<rgba16float, read>;
+@group(0) @binding(7) var in_emissive: texture_storage_2d<rgba16float, read>;
 
 fn hash_u32(x: u32) -> u32 {
     var h = x;
@@ -87,8 +87,41 @@ fn trace_shadow_segment(origin: vec3<f32>, dir: vec3<f32>, t_max: f32) -> bool {
     return hit.kind != RAY_QUERY_INTERSECTION_NONE;
 }
 
-/// rgb = incoming radiance if first hit is emissive; w = ray parameter `t` to that hit, else 0.
-fn incoming_radiance_and_hit_t(origin: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
+/// Monte Carlo NEE for a diffuse receiver: returns outgoing radiance / albedo (same convention as
+/// the primary `direct` term in main).
+fn nee_diffuse_outgoing_div_albedo(p: vec3<f32>, n: vec3<f32>, rng: ptr<function, u32>) -> vec3<f32> {
+    let lp = 0.18;
+    let ly = 0.995;
+    let light_area = 4.0 * lp * lp;
+    let u_a = rand01(rng);
+    let u_b = rand01(rng);
+    let lx = 0.5 - lp + u_a * (2.0 * lp);
+    let lz = 0.5 - lp + u_b * (2.0 * lp);
+    let p_light = vec3<f32>(lx, ly, lz);
+    let wi_nee = p_light - p;
+    let dist_nee = length(wi_nee);
+    let wi_n = wi_nee / max(dist_nee, 1e-6);
+    let cos_p = max(dot(n, wi_n), 0.0);
+    let cos_l = max(wi_n.y, 0.0);
+    let biased = p + n * 0.0002;
+    let occluded = trace_shadow_segment(biased, wi_n, dist_nee - 0.0005);
+    let pdf_area = 1.0 / light_area;
+    let g_nee = (cos_p * cos_l) / max(dist_nee * dist_nee, 1e-6);
+    let le = materials[3].emissive.xyz;
+    return select(
+        (1.0 / PI) * le * g_nee * (1.0 / pdf_area),
+        vec3<f32>(0.0),
+        occluded,
+    );
+}
+
+/// One cosine-sample path from `origin` along `dir`. `.xyz` = indirect term to accumulate
+/// (outgoing at primary ÷ rho_primary); `.w` = hit distance `t`, or 0 if miss.
+fn indirect_diffuse_one_bounce(
+    origin: vec3<f32>,
+    dir: vec3<f32>,
+    rng: ptr<function, u32>,
+) -> vec4<f32> {
     var rq: ray_query;
     rayQueryInitialize(&rq, acc_struct, RayDesc(0u, 0xFFu, 0.001, 100.0, origin, dir));
     rayQueryProceed(&rq);
@@ -97,11 +130,16 @@ fn incoming_radiance_and_hit_t(origin: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
         return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
     let t = hit.t;
-    let mat = materials[tri_meta[hit.primitive_index].material_id];
+    let tm = tri_meta[hit.primitive_index];
+    let mat = materials[tm.material_id];
+    let n_q = normalize(tm.normal.xyz);
+    let p_q = origin + dir * t;
     if (length(mat.emissive.xyz) > 0.01) {
         return vec4<f32>(mat.emissive.xyz, t);
     }
-    return vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    let div_albedo_q = nee_diffuse_outgoing_div_albedo(p_q, n_q, rng);
+    let rho_q = mat.albedo.xyz;
+    return vec4<f32>(rho_q * div_albedo_q, t);
 }
 
 fn camera_ray(gid: vec2<u32>) -> vec3<f32> {
@@ -130,8 +168,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let origin = camera_origin();
     let direction = camera_ray(gid.xy);
 
-    let view_z_prim = textureLoad(in_viewz, coord).x;
-    let t_prim = textureLoad(in_primary_hit_t, coord).x;
+    let t_prim = textureLoad(in_viewz, coord).x;
     let emissive_gbuf = textureLoad(in_emissive, coord);
     let nr_px = textureLoad(in_nr, coord);
     let unpacked_nr = nrd_front_end_unpack_normal_and_roughness(vec4<f32>(nr_px));
@@ -139,7 +176,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let rough = unpacked_nr.w;
     let hdp = uniforms.hit_dist_and_rough.xyz;
 
-    if (view_z_prim > 1e5 || t_prim > 1e5) {
+    if (t_prim > 1e5) {
         let sky = vec3<f32>(0.02, 0.02, 0.03);
         textureStore(
             out_diff,
@@ -152,7 +189,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let p = origin + direction * t_prim;
 
     if (length(emissive_gbuf.xyz) > 0.01) {
-        let norm_hit = reblur_front_end_get_norm_hit_dist(t_prim, view_z_prim, hdp, rough);
+        let norm_hit = reblur_front_end_get_norm_hit_dist(t_prim, t_prim, hdp, rough);
         textureStore(
             out_diff,
             gid.xy,
@@ -161,44 +198,17 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
 
-    let lp = 0.18;
-    let ly = 0.995;
-    let light_area = 4.0 * lp * lp;
-    let u_a = rand01(&rng);
-    let u_b = rand01(&rng);
-    let lx = 0.5 - lp + u_a * (2.0 * lp);
-    let lz = 0.5 - lp + u_b * (2.0 * lp);
-    let p_light = vec3<f32>(lx, ly, lz);
-    let wi_nee = p_light - p;
-    let dist_nee = length(wi_nee);
-    let wi_n = wi_nee / max(dist_nee, 1e-6);
-    let cos_p = max(dot(n, wi_n), 0.0);
-    let cos_l = max(wi_n.y, 0.0);
-    let biased_nee = p + n * 0.0002;
-    let occluded_nee = trace_shadow_segment(biased_nee, wi_n, dist_nee - 0.0005);
-    let pdf_area = 1.0 / light_area;
-    let g_nee = (cos_p * cos_l) / max(dist_nee * dist_nee, 1e-6);
-    let le = materials[3].emissive.xyz;
-    let direct = select(
-        (1.0 / PI) * le * g_nee * (1.0 / pdf_area),
-        vec3<f32>(0.0),
-        occluded_nee,
-    );
+    let direct = nee_diffuse_outgoing_div_albedo(p, n, &rng);
 
     let u1 = rand01(&rng);
     let u2 = rand01(&rng);
     let wi = sample_cosine_hemisphere_world(n, u1, u2);
     let biased_ind = p + n * 0.0002;
-    let ind_sample = incoming_radiance_and_hit_t(biased_ind, wi);
+    let ind_sample = indirect_diffuse_one_bounce(biased_ind, wi, &rng);
     let indirect = ind_sample.xyz;
     let t_ind = ind_sample.w;
 
-    var norm_hit_dist = 0.0;
-    if (t_ind > 1e-6 && length(indirect) > 1e-6) {
-        let p_ind = biased_ind + wi * t_ind;
-        let view_z_ind = (uniforms.view * vec4<f32>(p_ind, 1.0)).z;
-        norm_hit_dist = reblur_front_end_get_norm_hit_dist(t_ind, view_z_ind, hdp, rough);
-    }
+    var norm_hit_dist = reblur_front_end_get_norm_hit_dist(t_ind, t_prim, hdp, rough);
 
     let radiance_pre_albedo = direct + indirect;
     textureStore(

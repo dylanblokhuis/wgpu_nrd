@@ -71,6 +71,11 @@ impl WgpuNrd {
     /// formats in bind group layouts match pool textures and user inputs (SPIR-V often uses
     /// `StorageImageWriteWithoutFormat`). Use the same [`Identifier`] values as when you call
     /// [`WgpuNrd::encode_dispatches`]. An empty slice skips that patch (SPIR-V reflection defaults only).
+    ///
+    /// `prepare_instance` runs on the new [`Instance`] **before** dispatch lists are sampled and pipelines
+    /// are built. Apply any denoiser settings that change which resources appear in dispatches (for
+    /// example Reblur `hitDistanceReconstructionMode`) here so bind group layouts match
+    /// [`WgpuNrd::encode_dispatches`]. Use `|_| Ok(())` if defaults are enough.
     pub fn new(
         device: &wgpu::Device,
         adapter: &wgpu::Adapter,
@@ -79,8 +84,10 @@ impl WgpuNrd {
         resource_width: u32,
         resource_height: u32,
         compute_dispatch_identifiers: &[Identifier],
+        prepare_instance: impl FnOnce(&mut Instance) -> Result<(), WgpuNrdError>,
     ) -> Result<Self, WgpuNrdError> {
         let mut instance = Instance::try_new_denoisers(denoisers)?;
+        prepare_instance(&mut instance)?;
         let library = LibraryInfo::query()?;
 
         let (
