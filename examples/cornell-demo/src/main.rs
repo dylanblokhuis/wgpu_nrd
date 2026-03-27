@@ -2,15 +2,17 @@
 //! NEE for GI) + NRD ReblurDiffuse temporal/spatial denoise + blit (wgpu ray query).
 
 mod geometry;
+mod pipelines;
+mod scene;
 
-use std::{iter, mem};
+use std::mem;
 
 use bytemuck::{Pod, Zeroable};
-use geometry::{BlasVertex, build_cornell_mesh};
-use glam::{Affine3A, Mat4, Vec3};
+use glam::{Mat4, Vec3};
+use pipelines::{CornellRenderPipelines, FrameTextureViews};
+use scene::CornellScene;
 use sdl3::mouse::MouseButton;
 use wgpu::SurfaceTargetUnsafe;
-use wgpu::util::DeviceExt;
 use wgpu_nrd::{
     Denoiser, DenoiserSlot, Identifier, ResourceType, UserResources, WgpuNrd,
     default_common_settings, default_reblur_settings,
@@ -30,38 +32,9 @@ struct RtUniforms {
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
-struct GpuMaterial {
-    albedo: [f32; 4],
-    emissive: [f32; 4],
-}
-
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
 struct BlitUniforms {
     mode: u32,
     _pad: [u32; 3],
-}
-
-#[inline]
-fn affine_to_rows(mat: &Affine3A) -> [f32; 12] {
-    let row_0 = mat.matrix3.row(0);
-    let row_1 = mat.matrix3.row(1);
-    let row_2 = mat.matrix3.row(2);
-    let translation = mat.translation;
-    [
-        row_0.x,
-        row_0.y,
-        row_0.z,
-        translation.x,
-        row_1.x,
-        row_1.y,
-        row_1.z,
-        translation.y,
-        row_2.x,
-        row_2.y,
-        row_2.z,
-        translation.z,
-    ]
 }
 
 fn main() {
@@ -160,461 +133,14 @@ fn main() {
     )
     .unwrap();
 
-    let (vertex_data, index_data, tri_meta) = build_cornell_mesh();
+    let scene = CornellScene::new(&device);
 
-    let vertex_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("cornell_vertices"),
-        contents: bytemuck::cast_slice(&vertex_data),
-        usage: wgpu::BufferUsages::BLAS_INPUT,
-    });
+    let pipelines = CornellRenderPipelines::new(&device, &mut wesl, surface_config.format);
 
-    let index_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("cornell_indices"),
-        contents: bytemuck::cast_slice(&index_data),
-        usage: wgpu::BufferUsages::INDEX | wgpu::BufferUsages::BLAS_INPUT,
-    });
-
-    let tri_meta_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("cornell_tri_meta"),
-        contents: bytemuck::cast_slice(&tri_meta),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let gpu_materials: [GpuMaterial; 4] = [
-        GpuMaterial {
-            albedo: [0.73, 0.73, 0.73, 1.0],
-            emissive: [0.0; 4],
-        },
-        GpuMaterial {
-            albedo: [0.63, 0.065, 0.05, 1.0],
-            emissive: [0.0; 4],
-        },
-        GpuMaterial {
-            albedo: [0.14, 0.45, 0.091, 1.0],
-            emissive: [0.0; 4],
-        },
-        GpuMaterial {
-            albedo: [0.0; 4],
-            emissive: [15.0, 15.0, 15.0, 1.0],
-        },
-    ];
-    let materials_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("cornell_materials"),
-        contents: bytemuck::cast_slice(&gpu_materials),
-        usage: wgpu::BufferUsages::STORAGE,
-    });
-
-    let blas_geo_size_desc = wgpu::BlasTriangleGeometrySizeDescriptor {
-        vertex_format: wgpu::VertexFormat::Float32x3,
-        vertex_count: vertex_data.len() as u32,
-        index_format: Some(wgpu::IndexFormat::Uint16),
-        index_count: Some(index_data.len() as u32),
-        flags: wgpu::AccelerationStructureGeometryFlags::OPAQUE,
-    };
-
-    let blas = device.create_blas(
-        &wgpu::CreateBlasDescriptor {
-            label: Some("cornell_blas"),
-            flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-            update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-        },
-        wgpu::BlasGeometrySizeDescriptors::Triangles {
-            descriptors: vec![blas_geo_size_desc.clone()],
-        },
-    );
-
-    let mut tlas = device.create_tlas(&wgpu::CreateTlasDescriptor {
-        label: Some("cornell_tlas"),
-        flags: wgpu::AccelerationStructureFlags::PREFER_FAST_TRACE,
-        update_mode: wgpu::AccelerationStructureUpdateMode::Build,
-        max_instances: 1,
-    });
-    tlas[0] = Some(wgpu::TlasInstance::new(
-        &blas,
-        affine_to_rows(&Affine3A::IDENTITY),
-        0,
-        0xff,
-    ));
-
-    let gbuffer_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("gbuffer"),
-        source: wgpu::ShaderSource::Wgsl(
-            wesl.compile(&"package::gbuffer".parse().unwrap())
-                .unwrap()
-                .to_string()
-                .into(),
-        ),
-    });
-    let diffuse_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("trace_diffuse"),
-        source: wgpu::ShaderSource::Wgsl(
-            wesl.compile(&"package::trace".parse().unwrap())
-                .unwrap()
-                .to_string()
-                .into(),
-        ),
-    });
-    let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("blit"),
-        source: wgpu::ShaderSource::Wgsl(
-            wesl.compile(&"package::blit".parse().unwrap())
-                .unwrap()
-                .to_string()
-                .into(),
-        ),
-    });
-
-    let gbuffer_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("cornell_gbuffer_bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rg16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::R32Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 6,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::AccelerationStructure {
-                    vertex_return: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 7,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 8,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-        ],
-    });
-
-    let diffuse_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("cornell_diffuse_bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::WriteOnly,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::AccelerationStructure {
-                    vertex_return: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: true },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::ReadOnly,
-                    format: wgpu::TextureFormat::R32Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 6,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::ReadOnly,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 7,
-                visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::StorageTexture {
-                    access: wgpu::StorageTextureAccess::ReadOnly,
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                },
-                count: None,
-            },
-        ],
-    });
-
-    let gbuffer_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("cornell_gbuffer_pl"),
-        bind_group_layouts: &[Some(&gbuffer_bgl)],
-        immediate_size: 0,
-    });
-    let diffuse_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("cornell_diffuse_pl"),
-        bind_group_layouts: &[Some(&diffuse_bgl)],
-        immediate_size: 0,
-    });
-
-    let gbuffer_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("cornell_gbuffer"),
-        layout: Some(&gbuffer_pl),
-        module: &gbuffer_shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-    let diffuse_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-        label: Some("cornell_diffuse"),
-        layout: Some(&diffuse_pl),
-        module: &diffuse_shader,
-        entry_point: Some("main"),
-        compilation_options: Default::default(),
-        cache: None,
-    });
-
-    let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("cornell_blit_sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-        ..Default::default()
-    });
-
-    let blit_bgl_owned = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("cornell_blit_bgl"),
-        entries: &[
-            wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 1,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 3,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 4,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 5,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 6,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
-            wgpu::BindGroupLayoutEntry {
-                binding: 7,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Texture {
-                    sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
-                    multisampled: false,
-                },
-                count: None,
-            },
-        ],
-    });
-    let blit_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("cornell_blit_pl"),
-        bind_group_layouts: &[Some(&blit_bgl_owned)],
-        immediate_size: 0,
-    });
-
-    let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("cornell_blit"),
-        layout: Some(&blit_pl),
-        vertex: wgpu::VertexState {
-            module: &blit_shader,
-            entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            buffers: &[],
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &blit_shader,
-            entry_point: Some("fs_main"),
-            compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: surface_config.format,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            ..Default::default()
-        },
-        depth_stencil: None,
-        multisample: wgpu::MultisampleState::default(),
-        multiview_mask: None,
-        cache: None,
-    });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("as_build"),
     });
-    encoder.build_acceleration_structures(
-        iter::once(&wgpu::BlasBuildEntry {
-            blas: &blas,
-            geometry: wgpu::BlasGeometries::TriangleGeometries(vec![wgpu::BlasTriangleGeometry {
-                size: &blas_geo_size_desc,
-                vertex_buffer: &vertex_buf,
-                first_vertex: 0,
-                vertex_stride: mem::size_of::<BlasVertex>() as u64,
-                index_buffer: Some(&index_buf),
-                first_index: Some(0),
-                transform_buffer: None,
-                transform_buffer_offset: None,
-            }]),
-        }),
-        iter::once(&tlas),
-    );
+    scene.encode_build(&mut encoder);
     queue.submit(Some(encoder.finish()));
 
     let uniform_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -750,127 +276,23 @@ fn main() {
     let v_out_diff = out_diff_radiance_hitdist.create_view(&wgpu::TextureViewDescriptor::default());
     let v_out_validation = out_validation.create_view(&wgpu::TextureViewDescriptor::default());
 
-    let gbuffer_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cornell_gbuffer_bg"),
-        layout: &gbuffer_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&v_in_nr),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&v_in_mv),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&v_in_view_z),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::TextureView(&v_in_albedo),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::TextureView(&v_in_emissive),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: wgpu::BindingResource::AccelerationStructure(&tlas),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: tri_meta_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 8,
-                resource: materials_buf.as_entire_binding(),
-            },
-        ],
-    });
-
-    let diffuse_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cornell_diffuse_bg"),
-        layout: &diffuse_bgl,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&v_in_diff),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::AccelerationStructure(&tlas),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: tri_meta_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: materials_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: wgpu::BindingResource::TextureView(&v_in_view_z),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: wgpu::BindingResource::TextureView(&v_in_nr),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: wgpu::BindingResource::TextureView(&v_in_emissive),
-            },
-        ],
-    });
-
-    // Blit `mode` (see `blit.wesl`): 0 denoised, 1 raw, 2 normals, 3 depth, 4 NRD validation grid.
-    let blit_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("cornell_blit_bg"),
-        layout: &blit_bgl_owned,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&v_out_diff),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&v_in_diff),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::TextureView(&v_in_albedo),
-            },
-            wgpu::BindGroupEntry {
-                binding: 3,
-                resource: wgpu::BindingResource::TextureView(&v_in_nr),
-            },
-            wgpu::BindGroupEntry {
-                binding: 4,
-                resource: wgpu::BindingResource::TextureView(&v_in_view_z),
-            },
-            wgpu::BindGroupEntry {
-                binding: 5,
-                resource: wgpu::BindingResource::Sampler(&blit_sampler),
-            },
-            wgpu::BindGroupEntry {
-                binding: 6,
-                resource: blit_uniform_buf.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 7,
-                resource: wgpu::BindingResource::TextureView(&v_out_validation),
-            },
-        ],
-    });
+    let frame_views = FrameTextureViews {
+        v_in_mv: v_in_mv.clone(),
+        v_in_view_z: v_in_view_z.clone(),
+        v_in_nr: v_in_nr.clone(),
+        v_in_albedo: v_in_albedo.clone(),
+        v_in_emissive: v_in_emissive.clone(),
+        v_in_diff: v_in_diff.clone(),
+        v_out_diff: v_out_diff.clone(),
+        v_out_validation: v_out_validation.clone(),
+    };
+    let bind_groups = pipelines.create_bind_groups(
+        &device,
+        &scene,
+        &uniform_buf,
+        &blit_uniform_buf,
+        &frame_views,
+    );
 
     // Left-click cycles: denoised → raw → normals → depth → NRD validation.
     let mut blit_view_mode: u32 = 0;
@@ -990,11 +412,11 @@ fn main() {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor::default());
             let gw = (surface_config.width + 7) / 8;
             let gh = (surface_config.height + 7) / 8;
-            cpass.set_pipeline(&gbuffer_pipeline);
-            cpass.set_bind_group(0, &gbuffer_bind_group, &[]);
+            cpass.set_pipeline(&pipelines.gbuffer);
+            cpass.set_bind_group(0, &bind_groups.gbuffer, &[]);
             cpass.dispatch_workgroups(gw, gh, 1);
-            cpass.set_pipeline(&diffuse_pipeline);
-            cpass.set_bind_group(0, &diffuse_bind_group, &[]);
+            cpass.set_pipeline(&pipelines.diffuse);
+            cpass.set_bind_group(0, &bind_groups.diffuse, &[]);
             cpass.dispatch_workgroups(gw, gh, 1);
         }
 
@@ -1043,8 +465,8 @@ fn main() {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            rpass.set_pipeline(&blit_pipeline);
-            rpass.set_bind_group(0, &blit_bind_group, &[]);
+            rpass.set_pipeline(&pipelines.blit);
+            rpass.set_bind_group(0, &bind_groups.blit, &[]);
             rpass.draw(0..3, 0..1);
         }
 
