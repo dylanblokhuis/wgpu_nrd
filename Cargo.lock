@@ -1957,7 +1957,6 @@ dependencies = [
 name = "wgpu_nrd"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "nrd-sys",
  "rspirv-reflect",
  "thiserror 2.0.18",

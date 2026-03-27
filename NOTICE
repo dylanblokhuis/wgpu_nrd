@@ -1,0 +1,16 @@
+wgpu_nrd (this repository’s Rust sources)
+
+  Licensed under MIT OR Apache-2.0 — see LICENSE-MIT, LICENSE-APACHE, and
+  Cargo.toml.
+
+NVIDIA NRD / NVIDIA RTX SDK
+
+  The NVIDIA Real-Time Denoisers (NRD) library, shaders, and related materials
+  obtained from NVIDIA are not under MIT OR Apache-2.0. They are governed by the
+  NVIDIA RTX SDK license
+
+  If you distribute modifications or derivative works of NVIDIA sample source
+  code from the SDK, the NVIDIA license requires including this notice in those
+  distributions:
+
+    This software contains source code provided by NVIDIA Corporation.
