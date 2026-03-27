@@ -16,10 +16,6 @@
 Use `WgpuNrd::new` to construct, then `encode_dispatches` after updating
 denoiser settings on the instance.
 
-## Requirements
-
-- Rust edition 2024, **wgpu** 29 (see workspace `Cargo.toml`).
-
 ## Example
 
 ```sh
@@ -30,8 +26,7 @@ cargo run -p cornell-demo
 
 Rust code in this repository is **MIT OR Apache-2.0**. The **NVIDIA NRD** (and
 other NVIDIA RTX SDK) binaries, shaders, and headers you obtain from NVIDIA are
-governed separately — see **`NOTICE`** and
-**`licenses/NVIDIA-RTX-SDK-LICENSE.txt`**.
+governed separately — see **`NOTICE`**
 
 ## License
 
