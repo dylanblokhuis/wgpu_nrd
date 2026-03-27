@@ -10,7 +10,7 @@ default = []
 
 [dependencies]
 bytemuck.workspace = true
-nrd-sys = { path = "../nrd-sys" }
+nrd-sys = { git = "https://github.com/dylanblokhuis/nrd-sys.git" }
 rspirv-reflect = "0.9"
 thiserror = "2.0"
 wgpu.workspace = true
