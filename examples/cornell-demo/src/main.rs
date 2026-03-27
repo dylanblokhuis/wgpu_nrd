@@ -47,8 +47,8 @@ fn main() {
         .unwrap();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::default(),
-        flags: wgpu::InstanceFlags::default(),
+        backends: wgpu::Backends::VULKAN,
+        flags: wgpu::InstanceFlags::VALIDATION,
         display: None,
         backend_options: wgpu::BackendOptions::default(),
         memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
@@ -82,7 +82,7 @@ fn main() {
     };
     let cap = surface.get_capabilities(&adapter);
     let (width, height) = window.size();
-    let content_scale = window.display_scale();
+    let content_scale = 1.0;
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: cap.formats[0],
@@ -112,6 +112,11 @@ fn main() {
 
     let mut reblur_for_pipelines = default_reblur_settings();
     reblur_for_pipelines.hitDistanceReconstructionMode = 1;
+
+    println!(
+        "Starting NRD with backend: {:?}",
+        adapter.get_info().backend
+    );
 
     let mut wgpu_nrd = WgpuNrd::new(
         &device,

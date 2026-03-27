@@ -1298,6 +1298,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19b30a45b0cd0bcca8037f3d0dc3421eaf95327a17cad11964fb8179b4fc4832"
 
 [[package]]
+name = "rpkg-config"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a2d2f3481209a6b42eec2fbb49063fb4e8d35b57023401495d4fe0f85c817f0"
+
+[[package]]
 name = "rspirv"
 version = "0.12.0+sdk-1.3.268.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1347,7 +1353,7 @@ checksum = "b39cdef0fa800fc44525c84ccb54a029961a8215f9619753635a9c0d2538d46d"
 [[package]]
 name = "rusty_nrd"
 version = "0.1.0"
-source = "git+https://github.com/dylanblokhuis/rusty_nrd.git#fe0c2b0559292d03dbc92f3186c715cea184c440"
+source = "git+https://github.com/dylanblokhuis/rusty_nrd.git#3745881c5b95a65ef000ab80cbcdf86a616e8621"
 dependencies = [
  "bindgen",
  "cmake",
@@ -1381,14 +1387,64 @@ dependencies = [
  "libc",
  "objc2",
  "raw-window-handle",
+ "sdl3-image-sys",
+ "sdl3-sys",
+ "sdl3-ttf-sys",
+]
+
+[[package]]
+name = "sdl3-image-src"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a9520b8d17e6acb983f3be2042275e7cf573ec473f46db13d5bfa2629eb7572"
+
+[[package]]
+name = "sdl3-image-sys"
+version = "0.6.1+SDL-image-3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f61a8cc9c72e2cab2e500752f513f65043ff1d36f994b90c7b423abcb796330d"
+dependencies = [
+ "cmake",
+ "rpkg-config",
+ "sdl3-image-src",
  "sdl3-sys",
 ]
+
+[[package]]
+name = "sdl3-src"
+version = "3.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8cdee3a2e98fa6c01aff481da8b61594b40bf7dbc98fd0356c1e123661da3e7"
 
 [[package]]
 name = "sdl3-sys"
 version = "0.6.1+SDL-3.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d73fc820b0b6b9bd0557de7b799ec9da1ca4f35fcd1cb42f7ceb85e640d1477"
+dependencies = [
+ "cc",
+ "cmake",
+ "rpkg-config",
+ "sdl3-src",
+]
+
+[[package]]
+name = "sdl3-ttf-src"
+version = "3.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f28923d2ce72ff317d8eb7cec97ddfb8f351c330d7bcbf8c76e91332122c93b3"
+
+[[package]]
+name = "sdl3-ttf-sys"
+version = "0.6.0+SDL-ttf-3.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c30da3dcd7e062f19350b47a532f7629c42801b801687535fd31e8ba2adfd71d"
+dependencies = [
+ "cmake",
+ "rpkg-config",
+ "sdl3-sys",
+ "sdl3-ttf-src",
+]
 
 [[package]]
 name = "semver"

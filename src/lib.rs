@@ -150,16 +150,21 @@ impl WgpuNrd {
                 ));
             }
 
-            let (pipelines, bind_group_layout_constants, constant_layout_entries) =
-                build_pipelines(
-                    device,
-                    backend,
-                    raw,
-                    pipelines_slice,
-                    &dispatch_resources,
-                    &permanent,
-                    &transient,
-                )?;
+            let (
+                pipelines,
+                bind_group_layout_constants,
+                constant_layout_entries,
+                constant_buffer_and_samplers_space_index,
+                resources_space_index,
+            ) = build_pipelines(
+                device,
+                backend,
+                raw,
+                pipelines_slice,
+                &dispatch_resources,
+                &permanent,
+                &transient,
+            )?;
 
             (
                 shader_entry,
@@ -169,8 +174,8 @@ impl WgpuNrd {
                 pipelines,
                 bind_group_layout_constants,
                 constant_layout_entries,
-                raw.constantBufferAndSamplersSpaceIndex,
-                raw.resourcesSpaceIndex,
+                constant_buffer_and_samplers_space_index,
+                resources_space_index,
                 raw.constantBufferMaxDataSize,
             )
         };

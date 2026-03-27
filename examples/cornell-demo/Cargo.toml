@@ -8,7 +8,7 @@ publish = false
 bytemuck = "1.24"
 glam = "0.29"
 pollster = "0.4"
-sdl3 = { version = "0.17", features = ["raw-window-handle"] }
+sdl3 = { version = "0.17", features = ["raw-window-handle", "build-from-source"] }
 wgpu.workspace = true
 wgpu_nrd = { path = "../.." }
 wesl.workspace = true

@@ -3,8 +3,8 @@
 //! We avoid [`naga`]'s SPIR-V front end: it rejects capabilities NRD enables (for example
 //! `StorageImageWriteWithoutFormat`) even when shaders are only passed through to the driver.
 
-use crate::format::wgpu_texture_binding_sample_type;
 use crate::WgpuNrdError;
+use crate::format::wgpu_texture_binding_sample_type;
 use rspirv_reflect::rspirv::dr::{Instruction, Module, Operand};
 use rspirv_reflect::{DescriptorInfo, DescriptorType, ReflectError, Reflection, spirv};
 
