@@ -1,7 +1,7 @@
-//! `nrd_sys::Format` ↔ `wgpu::TextureFormat` and extent helpers.
+//! `rusty_nrd::Format` ↔ `wgpu::TextureFormat` and extent helpers.
 
 use crate::WgpuNrdError;
-use nrd_sys::{ffi, Format, ResourceType};
+use rusty_nrd::{Format, ResourceType, ffi};
 
 /// Convert NRD format to wgpu texture format.
 pub fn nrd_format_to_wgpu(f: Format) -> Result<wgpu::TextureFormat, WgpuNrdError> {
@@ -121,27 +121,29 @@ pub fn user_resource_storage_wgpu_format(ty: ResourceType) -> Option<wgpu::Textu
 /// Resolve the concrete [`wgpu::TextureFormat`] for a storage texture from NRD metadata (pool
 /// descriptor or user resource type).
 pub fn wgpu_format_for_resource_binding(
-    rd: &nrd_sys::ResourceBinding,
+    rd: &rusty_nrd::ResourceBinding,
     permanent: &[ffi::nrd_TextureDesc],
     transient: &[ffi::nrd_TextureDesc],
 ) -> Result<Option<wgpu::TextureFormat>, WgpuNrdError> {
     match rd.resource_type {
         ResourceType::TransientPool => {
-            let d = transient.get(rd.index_in_pool as usize).ok_or(
-                WgpuNrdError::MissingResource {
-                    resource_type: ResourceType::TransientPool,
-                    index_in_pool: rd.index_in_pool,
-                },
-            )?;
+            let d =
+                transient
+                    .get(rd.index_in_pool as usize)
+                    .ok_or(WgpuNrdError::MissingResource {
+                        resource_type: ResourceType::TransientPool,
+                        index_in_pool: rd.index_in_pool,
+                    })?;
             Ok(Some(nrd_format_to_wgpu(format_from_raw(d.format)?)?))
         }
         ResourceType::PermanentPool => {
-            let d = permanent.get(rd.index_in_pool as usize).ok_or(
-                WgpuNrdError::MissingResource {
-                    resource_type: ResourceType::PermanentPool,
-                    index_in_pool: rd.index_in_pool,
-                },
-            )?;
+            let d =
+                permanent
+                    .get(rd.index_in_pool as usize)
+                    .ok_or(WgpuNrdError::MissingResource {
+                        resource_type: ResourceType::PermanentPool,
+                        index_in_pool: rd.index_in_pool,
+                    })?;
             Ok(Some(nrd_format_to_wgpu(format_from_raw(d.format)?)?))
         }
         _ => Ok(user_resource_storage_wgpu_format(rd.resource_type)),
@@ -151,7 +153,7 @@ pub fn wgpu_format_for_resource_binding(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nrd_sys::Format;
+    use rusty_nrd::Format;
 
     #[test]
     fn rgba16_float_maps() {

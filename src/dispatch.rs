@@ -1,10 +1,10 @@
 //! Encode NRD dispatches into a compute pass.
 
-use nrd_sys::{DispatchDesc, ResourceBinding, ResourceType};
+use rusty_nrd::{DispatchDesc, ResourceBinding, ResourceType};
 
+use crate::WgpuNrdError;
 use crate::pools::PoolTextures;
 use crate::resources::UserResources;
-use crate::WgpuNrdError;
 
 /// Owned copy of one frame’s dispatch (NRD invalidates its internal pointers on the next API call).
 pub struct OwnedDispatch {
@@ -33,7 +33,7 @@ impl OwnedDispatch {
 /// Resolve a [`TextureView`](wgpu::TextureView) for one resource bind group slot.
 pub fn resolve_resource_view<'a>(
     le: &wgpu::BindGroupLayoutEntry,
-    rd: &nrd_sys::ResourceBinding,
+    rd: &rusty_nrd::ResourceBinding,
     pools: &'a PoolTextures,
     user: &'a UserResources,
 ) -> Result<&'a wgpu::TextureView, WgpuNrdError> {
@@ -72,7 +72,7 @@ pub fn create_bind_group_resources(
     label: Option<&str>,
     layout: &wgpu::BindGroupLayout,
     layout_entries: &[wgpu::BindGroupLayoutEntry],
-    resources: &[nrd_sys::ResourceBinding],
+    resources: &[rusty_nrd::ResourceBinding],
     pools: &PoolTextures,
     user: &UserResources,
 ) -> Result<wgpu::BindGroup, WgpuNrdError> {
@@ -169,9 +169,5 @@ pub fn encode_dispatch(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(const_space, bind_group_constants, &[]);
     pass.set_bind_group(resources_space, bind_group_resources, &[]);
-    pass.dispatch_workgroups(
-        dispatch.gridWidth as u32,
-        dispatch.gridHeight as u32,
-        1,
-    );
+    pass.dispatch_workgroups(dispatch.gridWidth as u32, dispatch.gridHeight as u32, 1);
 }

@@ -2,7 +2,7 @@
 
 use crate::WgpuNrdError;
 use crate::format::{format_from_raw, nrd_format_to_wgpu, pool_extent};
-use nrd_sys::ffi;
+use rusty_nrd::ffi;
 
 /// GPU textures backing NRD permanent and transient pools (indexed by `index_in_pool` in dispatches).
 pub struct PoolTextures {
@@ -69,16 +69,16 @@ impl PoolTextures {
         })
     }
 
-    /// Resolve a pool `index_in_pool` for [`nrd_sys::ResourceType::TransientPool`] or [`PermanentPool`](nrd_sys::ResourceType::PermanentPool).
+    /// Resolve a pool `index_in_pool` for [`rusty_nrd::ResourceType::TransientPool`] or [`PermanentPool`](rusty_nrd::ResourceType::PermanentPool).
     pub fn view_for_pool(
         &self,
-        pool: nrd_sys::ResourceType,
+        pool: rusty_nrd::ResourceType,
         index_in_pool: u16,
     ) -> Option<&wgpu::TextureView> {
         let idx = index_in_pool as usize;
         match pool {
-            nrd_sys::ResourceType::TransientPool => self.transient.get(idx).map(|(_, v)| v),
-            nrd_sys::ResourceType::PermanentPool => self.permanent.get(idx).map(|(_, v)| v),
+            rusty_nrd::ResourceType::TransientPool => self.transient.get(idx).map(|(_, v)| v),
+            rusty_nrd::ResourceType::PermanentPool => self.permanent.get(idx).map(|(_, v)| v),
             _ => None,
         }
     }

@@ -33,7 +33,7 @@ pub use resources::{UserResourceMap, UserResources, insert_user_resource};
 use std::ffi::CStr;
 
 /// Re-exports for NRD configuration without a direct `nrd-sys` dependency.
-pub use nrd_sys::{
+pub use rusty_nrd::{
     Denoiser, DenoiserSlot, Identifier, Instance, LibraryInfo, ResourceType,
     default_common_settings, default_reblur_settings,
 };
@@ -231,7 +231,7 @@ impl WgpuNrd {
             .get(idx)
             .ok_or_else(|| WgpuNrdError::SpirvReflect(format!("bad pipeline index {idx}")))?;
 
-        let resources: &[nrd_sys::ResourceBinding] = &dispatch.resources;
+        let resources: &[rusty_nrd::ResourceBinding] = &dispatch.resources;
         let bg0 = create_bind_group_constants(
             device,
             Some("nrd_bg_constants"),
@@ -275,8 +275,8 @@ impl WgpuNrd {
     }
 }
 
-fn sampler_desc_from_nrd(s: nrd_sys::Sampler) -> wgpu::SamplerDescriptor<'static> {
-    use nrd_sys::Sampler::*;
+fn sampler_desc_from_nrd(s: rusty_nrd::Sampler) -> wgpu::SamplerDescriptor<'static> {
+    use rusty_nrd::Sampler::*;
     let (mag, min) = match s {
         NearestClamp => (wgpu::FilterMode::Nearest, wgpu::FilterMode::Nearest),
         LinearClamp => (wgpu::FilterMode::Linear, wgpu::FilterMode::Linear),

@@ -5,17 +5,17 @@
 pub enum WgpuNrdError {
     /// NRD C API error.
     #[error("NRD: {0}")]
-    Nrd(#[from] nrd_sys::Error),
+    Nrd(#[from] rusty_nrd::Error),
     /// wgpu validation or device error (string from `wgpu::Error`).
     #[error("wgpu: {0}")]
     Wgpu(String),
-    /// Unsupported `nrd_sys::Format` for `wgpu::TextureFormat`.
+    /// Unsupported `rusty_nrd::Format` for `wgpu::TextureFormat`.
     #[error("unsupported NRD texture format: {0:?}")]
-    UnsupportedNrdFormat(nrd_sys::Format),
+    UnsupportedNrdFormat(rusty_nrd::Format),
     /// Pool or user resource binding could not be resolved for a dispatch.
     #[error("missing texture view for resource {resource_type:?} (descriptor index {index_in_pool})")]
     MissingResource {
-        resource_type: nrd_sys::ResourceType,
+        resource_type: rusty_nrd::ResourceType,
         index_in_pool: u16,
     },
     /// SPIR-V bytecode length is not a multiple of 4.

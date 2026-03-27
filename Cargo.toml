@@ -9,7 +9,7 @@ license = "MIT OR Apache-2.0"
 default = []
 
 [dependencies]
-nrd-sys = { git = "https://github.com/dylanblokhuis/nrd-sys.git" }
+rusty_nrd = { git = "https://github.com/dylanblokhuis/rusty_nrd.git" }
 rspirv-reflect = "0.9"
 thiserror = "2.0"
 wgpu.workspace = true

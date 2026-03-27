@@ -6,8 +6,8 @@ use std::ffi::CStr;
 use crate::WgpuNrdError;
 use crate::format::{wgpu_format_for_resource_binding, wgpu_texture_binding_sample_type};
 use crate::reflect::{bind_group_layout_entries, compute_workgroup_size, parse_spirv};
-use nrd_sys::ffi;
-use nrd_sys::{DispatchDesc, Identifier, Instance, ResourceBinding};
+use rusty_nrd::ffi;
+use rusty_nrd::{DispatchDesc, Identifier, Instance, ResourceBinding};
 
 /// One NRD pipeline: shader + layouts + compute pipeline.
 pub struct PipelineState {
@@ -101,7 +101,7 @@ pub unsafe fn shader_module_passthrough(
 }
 
 /// Snapshot resource bindings from [`Instance::compute_dispatches`] for storage format patching.
-/// Call this before other [`Instance`] borrows (e.g. [`nrd_sys::Instance::description`]) so the
+/// Call this before other [`Instance`] borrows (e.g. [`rusty_nrd::Instance::description`]) so the
 /// instance can be mutably borrowed here.
 pub fn clone_dispatch_resource_lists(
     instance: &mut Instance,

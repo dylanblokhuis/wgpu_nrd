@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use nrd_sys::ResourceType;
+use rusty_nrd::ResourceType;
 use wgpu::TextureView;
 
 /// Maps [`ResourceType`] (as `u32` discriminant) to a [`TextureView`].
