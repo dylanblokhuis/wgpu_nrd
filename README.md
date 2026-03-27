@@ -12,6 +12,9 @@
   (SPIR-V, DXIL, or precompiled Metal as provided by NRD).
 - Re-exports common NRD types (`Denoiser`, `Instance`, settings helpers) so
   callers often do not need a direct `nrd-sys` dependency.
+- Exposes NRD helper functions with
+  [WESL](https://github.com/wgsl-tooling-wg/wesl-rs). See the `cornell-demo` on
+  how its been used.
 
 Use `WgpuNrd::new` to construct, then `encode_dispatches` after updating
 denoiser settings on the instance.
