@@ -47,7 +47,7 @@ fn main() {
         .unwrap();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL,
+        backends: wgpu::Backends::default(),
         flags: wgpu::InstanceFlags::default(),
         display: None,
         backend_options: wgpu::BackendOptions::default(),
@@ -63,7 +63,6 @@ fn main() {
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
         required_features: wgpu::Features::PASSTHROUGH_SHADERS
             | wgpu::Features::EXPERIMENTAL_RAY_QUERY
-            | wgpu::Features::RG11B10UFLOAT_RENDERABLE
             | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
         required_limits: wgpu::Limits {
             max_storage_textures_per_shader_stage: 16,
