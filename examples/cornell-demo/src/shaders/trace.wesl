@@ -4,12 +4,6 @@ import nrd::NRD::nrd_front_end_unpack_normal_and_roughness;
 
 enable wgpu_ray_query;
 
-/// Diffuse shading from G-buffer (no primary camera ray). Per pixel: one NEE at the visible
-/// surface + one cosine hemisphere ray; at a **non-emissive** secondary hit, another NEE gives
-/// one-bounce diffuse GI (color bleeding). Emissive secondary uses emitted radiance.
-/// Stored value matches the blit: outgoing ÷ primary albedo (same units as primary NEE term).
-/// `norm_hit_dist`: indirect with a real secondary hit uses path length to that hit; else 0.
-
 const PI: f32 = 3.141592653589793;
 
 struct Uniforms {

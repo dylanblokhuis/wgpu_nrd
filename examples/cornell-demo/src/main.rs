@@ -1,6 +1,3 @@
-//! Cornell box G-buffer + full-res diffuse trace (primary NEE + one cosine bounce with secondary
-//! NEE for GI) + NRD ReblurDiffuse temporal/spatial denoise + blit (wgpu ray query).
-
 mod geometry;
 mod pipelines;
 mod scene;
