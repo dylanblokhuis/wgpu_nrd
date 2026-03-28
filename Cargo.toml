@@ -10,7 +10,6 @@ default = []
 
 [dependencies]
 rusty_nrd = { git = "https://github.com/dylanblokhuis/rusty_nrd.git" }
-rspirv-reflect = "0.9"
 thiserror = "2.0"
 wgpu.workspace = true
 

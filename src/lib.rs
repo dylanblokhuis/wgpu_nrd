@@ -11,7 +11,6 @@ mod error;
 mod format;
 mod pipelines;
 mod pools;
-mod reflect;
 mod resources;
 
 pub use dispatch::{
@@ -25,9 +24,6 @@ pub use format::{
 };
 pub use pipelines::{PipelineState, build_pipelines, clone_dispatch_resource_lists};
 pub use pools::PoolTextures;
-pub use reflect::{
-    bind_group_layout_entries, compute_workgroup_size, parse_spirv, spirv_image_format_to_wgpu,
-};
 pub use resources::{UserResourceMap, UserResources, insert_user_resource};
 
 use std::ffi::CStr;
@@ -154,6 +150,7 @@ impl WgpuNrd {
                 build_pipelines(
                     device,
                     backend,
+                    &instance,
                     raw,
                     pipelines_slice,
                     &dispatch_resources,

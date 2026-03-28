@@ -5,7 +5,6 @@ use std::ffi::CStr;
 
 use crate::WgpuNrdError;
 use crate::format::{wgpu_format_for_resource_binding, wgpu_texture_binding_sample_type};
-use crate::reflect::{bind_group_layout_entries, compute_workgroup_size, parse_spirv};
 use rusty_nrd::ffi;
 use rusty_nrd::{DispatchDesc, Identifier, Instance, ResourceBinding};
 
@@ -30,17 +29,6 @@ fn spirv_words(desc: &ffi::nrd_ComputeShaderDesc) -> Result<&[u32], WgpuNrdError
     }
     let words = len / 4;
     Ok(unsafe { std::slice::from_raw_parts(desc.bytecode as *const u32, words) })
-}
-
-fn spirv_bytes(desc: &ffi::nrd_ComputeShaderDesc) -> Result<&[u8], WgpuNrdError> {
-    if desc.size == 0 || desc.bytecode.is_null() {
-        return Err(WgpuNrdError::InvalidSpirvSize(0));
-    }
-    let len = desc.size as usize;
-    if len % 4 != 0 {
-        return Err(WgpuNrdError::InvalidSpirvSize(len));
-    }
-    Ok(unsafe { std::slice::from_raw_parts(desc.bytecode as *const u8, len) })
 }
 
 fn dxil_bytes(desc: &ffi::nrd_ComputeShaderDesc) -> &[u8] {
@@ -160,6 +148,7 @@ fn patch_resource_layout_from_nrd(
 pub fn build_pipelines(
     device: &wgpu::Device,
     backend: wgpu::Backend,
+    instance: &Instance,
     raw: &ffi::nrd_InstanceDesc,
     pipelines: &[ffi::nrd_PipelineDesc],
     dispatch_resources: &[(u16, Vec<ResourceBinding>)],
@@ -186,11 +175,9 @@ pub fn build_pipelines(
         return Err(WgpuNrdError::SpirvReflect("no NRD pipelines".into()));
     }
 
-    // Reflect set 0 from first pipeline SPIR-V
-    let spirv0 = spirv_bytes(&pipelines[0].computeShaderSPIRV)?;
-    let reflect0 = parse_spirv(spirv0)?;
     let entries0 = bind_group_layout_entries(
-        &reflect0,
+        instance,
+        0,
         raw.constantBufferAndSamplersSpaceIndex,
         raw.constantBufferMaxDataSize,
     )?;
@@ -203,11 +190,13 @@ pub fn build_pipelines(
     let mut out = Vec::with_capacity(pipelines.len());
 
     for (i, p) in pipelines.iter().enumerate() {
-        let spirv = spirv_bytes(&p.computeShaderSPIRV)?;
-        let reflection = parse_spirv(spirv)?;
-        let wg = compute_workgroup_size(&reflection, &entry)?;
+        let wg_x = p.workgroupSizeX;
+        let wg_y = p.workgroupSizeY;
+        let wg_z = p.workgroupSizeZ;
+        let wg = (wg_x as u32, wg_y as u32, wg_z as u32);
 
-        let mut entries1 = bind_group_layout_entries(&reflection, raw.resourcesSpaceIndex, 1)?;
+        let mut entries1 =
+            bind_group_layout_entries(instance, i as u16, raw.resourcesSpaceIndex, 1)?;
         if let Some((_, resources)) = dispatch_resources.iter().find(|(pid, _)| *pid == i as u16) {
             patch_resource_layout_from_nrd(&mut entries1, resources, permanent, transient)?;
         }
@@ -218,6 +207,7 @@ pub fn build_pipelines(
 
         let s_cb = raw.constantBufferAndSamplersSpaceIndex;
         let s_res = raw.resourcesSpaceIndex;
+
         let max_g = s_cb.max(s_res);
         let mut layouts_ordered: Vec<&wgpu::BindGroupLayout> = Vec::new();
         for g in 0..=max_g {
@@ -267,4 +257,56 @@ pub fn build_pipelines(
     }
 
     Ok((out, bind_group_layout_cb, entries0_owned))
+}
+
+/// Build [`wgpu::BindGroupLayoutEntry`] list for descriptor space `group` from NRD.
+pub fn bind_group_layout_entries(
+    instance: &Instance,
+    pipeline_index: u16,
+    group: u32,
+    min_uniform_binding_size: u32,
+) -> Result<Vec<wgpu::BindGroupLayoutEntry>, WgpuNrdError> {
+    let mut out = Vec::new();
+    let descs = instance
+        .pipeline_descriptor_binding_descs(pipeline_index, true)
+        .map_err(WgpuNrdError::Nrd)?;
+
+    let ubo_size = min_uniform_binding_size.max(1) as u64;
+    for d in descs.iter().filter(|d| d.spaceIndex == group) {
+        let ty = match d.bindingType {
+            ffi::nrd_BindingType_CONSTANT_BUFFER => wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: std::num::NonZeroU64::new(ubo_size),
+            },
+            ffi::nrd_BindingType_SAMPLER => {
+                wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)
+            }
+            ffi::nrd_BindingType_TEXTURE => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
+            ffi::nrd_BindingType_STORAGE_TEXTURE => wgpu::BindingType::StorageTexture {
+                access: wgpu::StorageTextureAccess::WriteOnly,
+                format: wgpu::TextureFormat::Rgba16Float,
+                view_dimension: wgpu::TextureViewDimension::D2,
+            },
+            other => {
+                return Err(WgpuNrdError::SpirvReflect(format!(
+                    "unsupported NRD binding type {other} at set {} binding {}",
+                    d.spaceIndex, d.bindingIndex
+                )));
+            }
+        };
+        println!("set: {} - binding: {}", d.spaceIndex, d.bindingIndex);
+        out.push(wgpu::BindGroupLayoutEntry {
+            binding: d.bindingIndex,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty,
+            count: None,
+        });
+    }
+    out.sort_by_key(|e| e.binding);
+    Ok(out)
 }
