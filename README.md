@@ -3,7 +3,7 @@
 **wgpu** integration for
 [NVIDIA NRD](https://github.com/NVIDIAGameWorks/RayTracingDenoiser)
 
-Still work in progress, the rusty_nrd api needs to be cleaned up.
+⚠️ Still work in progress!
 
 ## What it does
 
@@ -24,6 +24,15 @@ denoiser settings on the instance.
 ```sh
 cargo run -p cornell-demo
 ```
+
+## Support
+
+| OS      | Backend | Status                        |
+| ------- | ------- | ----------------------------- |
+| Windows | Vulkan  | ✅ Works                      |
+| Windows | DX12    | ❌ Doesn't work at the moment |
+| macOS   | Metal   | ✅ Works                      |
+| Linux   | Vulkan  | ⚠️ Not yet tested             |
 
 ## Third-party / NVIDIA NRD
 

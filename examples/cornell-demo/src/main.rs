@@ -47,7 +47,7 @@ fn main() {
         .unwrap();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::default(),
+        backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
         flags: wgpu::InstanceFlags::default(),
         display: None,
         backend_options: wgpu::BackendOptions::default(),
@@ -58,6 +58,7 @@ fn main() {
         power_preference: wgpu::PowerPreference::HighPerformance,
         force_fallback_adapter: false,
         compatible_surface: None,
+        // apply_limit_buckets: false,
     }))
     .unwrap();
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -82,14 +83,13 @@ fn main() {
     };
     let cap = surface.get_capabilities(&adapter);
     let (width, height) = window.size();
-    let content_scale = window.display_scale();
     let surface_config = wgpu::SurfaceConfiguration {
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
         format: cap.formats[0],
         view_formats: vec![cap.formats[0].add_srgb_suffix()],
         alpha_mode: wgpu::CompositeAlphaMode::Auto,
-        width: (width as f32 * content_scale) as u32,
-        height: (height as f32 * content_scale) as u32,
+        width,
+        height,
         desired_maximum_frame_latency: 3,
         present_mode: wgpu::PresentMode::AutoVsync,
     };

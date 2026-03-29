@@ -19,7 +19,7 @@ pub struct PipelineState {
 }
 
 /// SPIR-V slice from [`ffi::nrd_ComputeShaderDesc`].
-fn spirv_words(desc: &ffi::nrd_ComputeShaderDesc) -> Result<&[u32], WgpuNrdError> {
+fn spirv_words(desc: &ffi::nrd_ComputeShaderDesc) -> Result<Vec<u32>, WgpuNrdError> {
     if desc.size == 0 || desc.bytecode.is_null() {
         return Err(WgpuNrdError::InvalidSpirvSize(0));
     }
@@ -27,8 +27,12 @@ fn spirv_words(desc: &ffi::nrd_ComputeShaderDesc) -> Result<&[u32], WgpuNrdError
     if len % 4 != 0 {
         return Err(WgpuNrdError::InvalidSpirvSize(len));
     }
-    let words = len / 4;
-    Ok(unsafe { std::slice::from_raw_parts(desc.bytecode as *const u32, words) })
+    let bytes = unsafe { std::slice::from_raw_parts(desc.bytecode as *const u8, len) };
+    let mut out = Vec::with_capacity(len / 4);
+    for chunk in bytes.chunks_exact(4) {
+        out.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    Ok(out)
 }
 
 fn dxil_bytes(desc: &ffi::nrd_ComputeShaderDesc) -> &[u8] {
@@ -63,7 +67,8 @@ pub unsafe fn shader_module_passthrough(
         | wgpu::Backend::Noop
         | wgpu::Backend::BrowserWebGpu => {
             let words = spirv_words(&pipeline.computeShaderSPIRV)?;
-            desc.spirv = Some(Cow::Borrowed(words));
+
+            desc.spirv = Some(Cow::Owned(words));
         }
         wgpu::Backend::Dx12 => {
             let dxil = dxil_bytes(&pipeline.computeShaderDXIL);
@@ -299,7 +304,7 @@ pub fn bind_group_layout_entries(
                 )));
             }
         };
-        println!("set: {} - binding: {}", d.spaceIndex, d.bindingIndex);
+
         out.push(wgpu::BindGroupLayoutEntry {
             binding: d.bindingIndex,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -307,6 +312,5 @@ pub fn bind_group_layout_entries(
             count: None,
         });
     }
-    out.sort_by_key(|e| e.binding);
     Ok(out)
 }

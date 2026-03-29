@@ -18,5 +18,5 @@ resolver = "3"
 members = [".", "examples/cornell-demo", "shader"]
 
 [workspace.dependencies]
-wgpu = "29"
+wgpu = { git = "https://github.com/dylanblokhuis/wgpu.git", branch = "optional-sequential-bindings" }
 wesl = { version = "0.3", features = ["naga-ext"] }
