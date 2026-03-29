@@ -47,7 +47,7 @@ fn main() {
         .unwrap();
 
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-        backends: wgpu::Backends::METAL | wgpu::Backends::VULKAN | wgpu::Backends::DX12,
+        backends: wgpu::Backends::METAL | wgpu::Backends::VULKAN,
         flags: wgpu::InstanceFlags::default(),
         display: None,
         backend_options: wgpu::BackendOptions::default(),

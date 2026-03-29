@@ -167,8 +167,7 @@ pub fn build_pipelines(
     ),
     WgpuNrdError,
 > {
-    let resources_sequential_bindings =
-        backend == wgpu::Backend::Metal || backend == wgpu::Backend::Dx12;
+    let resources_sequential_bindings = backend == wgpu::Backend::Metal;
     let entry_cstr = if raw.shaderEntryPoint.is_null() {
         "main"
     } else {
