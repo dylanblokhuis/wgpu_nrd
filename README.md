@@ -3,7 +3,7 @@
 **wgpu** integration for
 [NVIDIA NRD](https://github.com/NVIDIAGameWorks/RayTracingDenoiser)
 
-⚠️ Still work in progress!
+⚠️ Still work in progress! (currently requires a patched wgpu)
 
 ## What it does
 
