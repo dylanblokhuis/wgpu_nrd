@@ -1,6 +1,6 @@
 //! Encode NRD dispatches into a compute pass.
 
-use rusty_nrd::{DescriptorType, DispatchDesc, ResourceBinding, ResourceType};
+use rusty_nrd::{DispatchDesc, ResourceBinding, ResourceType};
 
 use crate::WgpuNrdError;
 use crate::pools::PoolTextures;
@@ -84,26 +84,8 @@ pub fn create_bind_group_resources(
         )));
     }
 
-    let mut texture_resources = resources
-        .iter()
-        .filter(|r| r.descriptor_type == DescriptorType::Texture);
-    let mut storage_resources = resources
-        .iter()
-        .filter(|r| r.descriptor_type == DescriptorType::StorageTexture);
-
     let mut entries = Vec::with_capacity(resources.len());
-    for le in layout_entries.iter() {
-        let rd = match le.ty {
-            wgpu::BindingType::Texture { .. } => texture_resources.next(),
-            wgpu::BindingType::StorageTexture { .. } => storage_resources.next(),
-            _ => None,
-        }
-        .ok_or_else(|| {
-            WgpuNrdError::SpirvReflect(
-                "resource descriptor type mismatch while building NRD bind group".into(),
-            )
-        })?;
-
+    for (le, rd) in layout_entries.iter().zip(resources.iter()) {
         let view = resolve_resource_view(le, rd, pools, user)?;
         entries.push(wgpu::BindGroupEntry {
             binding: le.binding,

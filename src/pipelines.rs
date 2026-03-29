@@ -167,7 +167,8 @@ pub fn build_pipelines(
     ),
     WgpuNrdError,
 > {
-    let resources_sequential_bindings = backend == wgpu::Backend::Metal;
+    let resources_sequential_bindings =
+        backend == wgpu::Backend::Metal || backend == wgpu::Backend::Dx12;
     let entry_cstr = if raw.shaderEntryPoint.is_null() {
         "main"
     } else {
@@ -186,7 +187,7 @@ pub fn build_pipelines(
         0,
         raw.constantBufferAndSamplersSpaceIndex,
         raw.constantBufferMaxDataSize,
-        true,
+        resources_sequential_bindings,
     )?;
     let bind_group_layout_cb = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("nrd_set_constant_samplers"),
