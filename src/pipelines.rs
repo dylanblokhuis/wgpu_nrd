@@ -6,7 +6,7 @@ use std::ffi::CStr;
 use crate::WgpuNrdError;
 use crate::format::{wgpu_format_for_resource_binding, wgpu_texture_binding_sample_type};
 use rusty_nrd::ffi;
-use rusty_nrd::{DispatchDesc, Identifier, Instance, ResourceBinding};
+use rusty_nrd::{DescriptorType, DispatchDesc, Identifier, Instance, ResourceBinding};
 
 /// One NRD pipeline: shader + layouts + compute pipeline.
 pub struct PipelineState {
@@ -167,6 +167,7 @@ pub fn build_pipelines(
     ),
     WgpuNrdError,
 > {
+    let resources_sequential_bindings = backend == wgpu::Backend::Metal;
     let entry_cstr = if raw.shaderEntryPoint.is_null() {
         "main"
     } else {
@@ -185,12 +186,12 @@ pub fn build_pipelines(
         0,
         raw.constantBufferAndSamplersSpaceIndex,
         raw.constantBufferMaxDataSize,
+        true,
     )?;
     let bind_group_layout_cb = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
         label: Some("nrd_set_constant_samplers"),
         entries: &entries0,
     });
-    let entries0_owned = entries0.clone();
 
     let mut out = Vec::with_capacity(pipelines.len());
 
@@ -200,8 +201,13 @@ pub fn build_pipelines(
         let wg_z = p.workgroupSizeZ;
         let wg = (wg_x as u32, wg_y as u32, wg_z as u32);
 
-        let mut entries1 =
-            bind_group_layout_entries(instance, i as u16, raw.resourcesSpaceIndex, 1)?;
+        let mut entries1 = bind_group_layout_entries(
+            instance,
+            i as u16,
+            raw.resourcesSpaceIndex,
+            1,
+            resources_sequential_bindings,
+        )?;
         if let Some((_, resources)) = dispatch_resources.iter().find(|(pid, _)| *pid == i as u16) {
             patch_resource_layout_from_nrd(&mut entries1, resources, permanent, transient)?;
         }
@@ -212,7 +218,6 @@ pub fn build_pipelines(
 
         let s_cb = raw.constantBufferAndSamplersSpaceIndex;
         let s_res = raw.resourcesSpaceIndex;
-
         let max_g = s_cb.max(s_res);
         let mut layouts_ordered: Vec<&wgpu::BindGroupLayout> = Vec::new();
         for g in 0..=max_g {
@@ -261,7 +266,7 @@ pub fn build_pipelines(
         });
     }
 
-    Ok((out, bind_group_layout_cb, entries0_owned))
+    Ok((out, bind_group_layout_cb, entries0))
 }
 
 /// Build [`wgpu::BindGroupLayoutEntry`] list for descriptor space `group` from NRD.
@@ -270,6 +275,7 @@ pub fn bind_group_layout_entries(
     pipeline_index: u16,
     group: u32,
     min_uniform_binding_size: u32,
+    sequentialize_bindings: bool,
 ) -> Result<Vec<wgpu::BindGroupLayoutEntry>, WgpuNrdError> {
     let mut out = Vec::new();
     let descs = instance
@@ -306,7 +312,11 @@ pub fn bind_group_layout_entries(
         };
 
         out.push(wgpu::BindGroupLayoutEntry {
-            binding: d.bindingIndex,
+            binding: if sequentialize_bindings {
+                out.len() as u32
+            } else {
+                d.bindingIndex
+            },
             visibility: wgpu::ShaderStages::COMPUTE,
             ty,
             count: None,
